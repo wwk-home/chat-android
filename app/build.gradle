@@ -1,5 +1,6 @@
 apply plugin: 'com.android.application'
 apply plugin: 'com.huawei.agconnect'
+apply plugin: 'com.hihonor.mcs.asplugin'
 
 android {
     //加载资源
@@ -21,14 +22,14 @@ android {
             keyPassword properties.getProperty('DEBUG_KEY_PASSWORD', '123456')
         }
     }
-    compileSdkVersion 30
-    buildToolsVersion "30.0.3"
+    compileSdk 34
+    //buildToolsVersion "30.0.3"
     defaultConfig {
         applicationId "com.hyphenate.chatdemo"
         minSdkVersion 21
-        targetSdkVersion 30
-        versionCode 100
-        versionName "4.0.0"
+        targetSdkVersion 34
+        versionCode 121
+        versionName "4.2.1"
         multiDexEnabled true
         //为了兼容5.0以下使用vector图标
         vectorDrawables.useSupportLibrary = true
@@ -59,6 +60,7 @@ android {
         manifestPlaceholders = [EASEMOB_APPKEY: properties.getProperty("EASEMOB_APPKEY", "******"),
                                 VIVO_PUSH_APPKEY: properties.getProperty("VIVO_PUSH_APPKEY", "******"),
                                 VIVO_PUSH_APPID: properties.getProperty("VIVO_PUSH_APPID", "******"),
+                                HONOR_PUSH_APPID: properties.getProperty("HONOR_PUSH_APPID", "******"),
                                 BAIDU_LOCATION_APPKEY: properties.getProperty("BAIDU_LOCATION_APPKEY", "******")
         ]
         ndk {
@@ -69,6 +71,7 @@ android {
             ndkBuild {
 //                arguments "NDK_LIBS_OUT=libs", "all"
                 abiFilters  "arm64-v8a","armeabi-v7a"
+                arguments '-j8'
             }
         }
     }
@@ -126,20 +129,19 @@ android {
 
 dependencies {
     implementation fileTree(dir: 'libs', include: ['*.jar'])
-    implementation 'androidx.appcompat:appcompat:1.2.0'
-    implementation 'com.google.android.material:material:1.2.1'
-    implementation 'androidx.constraintlayout:constraintlayout:2.0.1'
+    implementation 'androidx.appcompat:appcompat:1.3.1'
+    implementation 'com.google.android.material:material:1.4.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.0'
     //ViewModel and LiveData
     implementation 'androidx.lifecycle:lifecycle-extensions:2.2.0'
-    testImplementation 'junit:junit:4.12'
-    androidTestImplementation 'androidx.test.ext:junit:1.1.1'
-    androidTestImplementation 'androidx.test.espresso:espresso-core:3.2.0'
     // google bottom navigation bar
     implementation 'com.ashokvarma.android:bottom-navigation-bar:2.1.0'
     // resolve 64k limit
     implementation 'com.android.support:multidex:1.0.3'
     // hms push
     implementation 'com.huawei.hms:push:6.3.0.302'
+    // hihonor push
+    implementation 'com.hihonor.mcs:push:7.0.41.301'
     // meizu push
     implementation 'com.meizu.flyme.internet:push-internal:4.0.4@aar'//配置集成sdk
     //oppo push
@@ -150,7 +152,7 @@ dependencies {
     implementation 'androidx.annotation:annotation:1.1.0'
     // Google firebase cloud messaging
     // Import the BoM for the Firebase platform
-    implementation platform('com.google.firebase:firebase-bom:28.2.1')
+    implementation platform('com.google.firebase:firebase-bom:29.1.0')
 
     // Declare the dependencies for the Firebase Cloud Messaging and Analytics libraries
     // When using the BoM, you don't specify versions in Firebase library dependencies
@@ -169,17 +171,18 @@ dependencies {
     implementation 'com.tencent.bugly:nativecrashreport:3.3.1'
 
     implementation 'pub.devrel:easypermissions:3.0.0'
+    implementation 'org.jsoup:jsoup:1.13.1'
 
     // EaseIMKit
 //    api (project(path: ':ease-im-kit'))
-    implementation 'io.hyphenate:ease-im-kit:4.0.0'
+    implementation 'io.hyphenate:ease-im-kit:4.2.1'
     // EaseIMKit依赖，必须添加环信IM SDK
 //    implementation project(path: ':hyphenatechatsdk')
-    implementation 'io.hyphenate:hyphenate-chat:4.0.0'
+    implementation 'io.hyphenate:hyphenate-chat:4.2.1'
 
     //EaseCallKit依赖，必须添加环信IM SDK
 //    api project(':ease-call-kit')
-    implementation 'io.hyphenate:ease-call-kit:4.0.0'
+    implementation 'io.hyphenate:ease-call-kit:4.2.1'
 
 }
 

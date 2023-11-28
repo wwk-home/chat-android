@@ -11,29 +11,42 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.os.Build;
+import android.text.SpannableString;
+import android.text.Spanned;
 import android.text.TextUtils;
+import android.util.Log;
+import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.RelativeLayout;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.app.AppCompatActivity;
 import androidx.lifecycle.ViewModelProvider;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
 import com.hyphenate.EMCallBack;
 import com.hyphenate.chat.EMClient;
 import com.hyphenate.chat.EMCustomMessageBody;
 import com.hyphenate.chat.EMGroup;
 import com.hyphenate.chat.EMMessage;
-import com.hyphenate.easecallkit.EaseCallKit;
-import com.hyphenate.easecallkit.base.EaseCallType;
+import com.hyphenate.chat.EMTextMessageBody;
 import com.hyphenate.chatdemo.DemoApplication;
 import com.hyphenate.chatdemo.DemoHelper;
 import com.hyphenate.chatdemo.R;
 import com.hyphenate.chatdemo.common.constant.DemoConstant;
+import com.hyphenate.chatdemo.common.enums.Status;
 import com.hyphenate.chatdemo.common.livedatas.LiveDataBus;
 import com.hyphenate.chatdemo.common.model.EmojiconExampleGroupData;
+import com.hyphenate.chatdemo.common.utils.RecyclerViewUtils;
 import com.hyphenate.chatdemo.section.av.VideoCallActivity;
 import com.hyphenate.chatdemo.section.base.BaseActivity;
 import com.hyphenate.chatdemo.section.chat.activity.ForwardMessageActivity;
@@ -44,11 +57,17 @@ import com.hyphenate.chatdemo.section.conference.ConferenceInviteActivity;
 import com.hyphenate.chatdemo.section.contact.activity.ContactDetailActivity;
 import com.hyphenate.chatdemo.section.dialog.DemoDialogFragment;
 import com.hyphenate.chatdemo.section.dialog.DemoListDialogFragment;
+import com.hyphenate.chatdemo.section.dialog.EditTextDialogFragment;
 import com.hyphenate.chatdemo.section.dialog.FullEditDialogFragment;
 import com.hyphenate.chatdemo.section.dialog.LabelEditDialogFragment;
 import com.hyphenate.chatdemo.section.dialog.SimpleDialogFragment;
 import com.hyphenate.chatdemo.section.group.GroupHelper;
+import com.hyphenate.chatdemo.section.group.MemberAttributeBean;
+import com.hyphenate.chatdemo.section.group.viewmodels.GroupDetailViewModel;
 import com.hyphenate.chatdemo.section.me.activity.UserDetailActivity;
+import com.hyphenate.easecallkit.EaseCallKit;
+import com.hyphenate.easecallkit.base.EaseCallType;
+import com.hyphenate.easeui.adapter.EaseMessageAdapter;
 import com.hyphenate.easeui.constants.EaseConstant;
 import com.hyphenate.easeui.domain.EaseUser;
 import com.hyphenate.easeui.model.EaseEvent;
@@ -58,16 +77,26 @@ import com.hyphenate.easeui.modules.chat.interfaces.IChatExtendMenu;
 import com.hyphenate.easeui.modules.chat.interfaces.OnRecallMessageResultListener;
 import com.hyphenate.easeui.modules.menu.EasePopupWindowHelper;
 import com.hyphenate.easeui.modules.menu.MenuItemBean;
+import com.hyphenate.easeui.utils.EaseUserUtils;
+import com.hyphenate.easeui.widget.CenterImageSpan;
 import com.hyphenate.util.EMLog;
+import com.hyphenate.util.VersionUtils;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import pub.devrel.easypermissions.EasyPermissions;
 
 
-public class ChatFragment extends EaseChatFragment implements OnRecallMessageResultListener, EasyPermissions.PermissionCallbacks {
+public class ChatFragment extends EaseChatFragment implements OnRecallMessageResultListener, EasyPermissions.PermissionCallbacks{
     private static final String TAG = ChatFragment.class.getSimpleName();
     private static final int REQUEST_CODE_SELECT_USER_CARD = 20;
     private static final int REQUEST_CODE_CAMERA = 110;
@@ -92,6 +121,14 @@ public class ChatFragment extends EaseChatFragment implements OnRecallMessageRes
     };
     private OnFragmentInfoListener infoListener;
     private Dialog dialog;
+    private boolean isFirstMeasure = true;
+    private GroupDetailViewModel groupDetailViewModel;
+    private final ActivityResultLauncher<String[]> requestImagePermission = registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions()
+            , result -> onRequestResult(result, REQUEST_CODE_STORAGE_PICTURE));
+    private final ActivityResultLauncher<String[]> requestVideoPermission = registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions()
+            , result -> onRequestResult(result, REQUEST_CODE_STORAGE_VIDEO));
+    private final ActivityResultLauncher<String[]> requestFilePermission = registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions()
+            , result -> onRequestResult(result, REQUEST_CODE_STORAGE_FILE));
 
     @Override
     public void initView() {
@@ -102,7 +139,10 @@ public class ChatFragment extends EaseChatFragment implements OnRecallMessageRes
         EaseChatMessageListLayout messageListLayout = chatLayout.getChatMessageListLayout();
         //设置聊天列表背景
 //      messageListLayout.setBackground(new ColorDrawable(Color.parseColor("#DA5A4D")));
-        messageListLayout.setBackgroundResource(R.drawable.demo_caht_bitmap_bg);
+        setSwindleLayoutInChatFragemntHead();
+        //设置是否显示昵称
+        //messageListLayout.showNickname(true);
+        messageListLayout.setBackgroundResource(R.color.demo_chat_fragment_color);
         //设置默认头像
         //messageListLayout.setAvatarDefaultSrc(ContextCompat.getDrawable(mContext, R.drawable.ease_default_avatar));
         //设置头像形状
@@ -132,13 +172,29 @@ public class ChatFragment extends EaseChatFragment implements OnRecallMessageRes
         chatLayout.setTargetLanguageCode(DemoHelper.getInstance().getModel().getTargetLanguage());
     }
 
+    private void setSwindleLayoutInChatFragemntHead() {
+        EaseChatMessageListLayout messageListLayout = chatLayout.getChatMessageListLayout();
+        RelativeLayout listLayoutParent = (RelativeLayout) (messageListLayout.getParent());
+        View view = LayoutInflater.from(mContext).inflate(R.layout.demo_chat_swindle, listLayoutParent, false);
+        listLayoutParent.addView(view);
+        listLayoutParent.post(new Runnable() {
+            @Override
+            public void run() {
+                messageListLayout.setPadding(0, view.getMeasuredHeight(),0,0);
+            }
+        });
+    }
+
     private void addItemMenuAction() {
-        MenuItemBean itemMenu = new MenuItemBean(0, R.id.action_chat_forward, 11, getString(R.string.action_forward));
-        itemMenu.setResourceId(R.drawable.ease_chat_item_menu_forward);
-        chatLayout.addItemMenu(itemMenu );
-        MenuItemBean itemMenu1 = new MenuItemBean(0,R.id.action_chat_label,12,getString(R.string.action_report_label));
-        itemMenu1.setResourceId(R.drawable.d_exclamationmark_in_triangle);
-        chatLayout.addItemMenu(itemMenu1 );
+        MenuItemBean itemMenuForward = new MenuItemBean(0, R.id.action_chat_forward, 11, getString(R.string.action_forward));
+        itemMenuForward.setResourceId(R.drawable.ease_chat_item_menu_forward);
+        chatLayout.addItemMenu(itemMenuForward );
+        MenuItemBean itemMenuReport = new MenuItemBean(0,R.id.action_chat_label,12,getString(R.string.action_report_label));
+        itemMenuReport.setResourceId(R.drawable.d_exclamationmark_in_triangle);
+        chatLayout.addItemMenu(itemMenuReport );
+        MenuItemBean itemMenuMsgEdit = new MenuItemBean(0,R.id.action_msg_edit,13,getString(R.string.action_msg_edit));
+        itemMenuMsgEdit.setResourceId(R.drawable.ease_chat_item_menu_modify);
+        chatLayout.addItemMenu(itemMenuMsgEdit );
 //        chatLayout.setReportYourSelf(false);
     }
 
@@ -178,6 +234,7 @@ public class ChatFragment extends EaseChatFragment implements OnRecallMessageRes
     public void initListener() {
         super.initListener();
         chatLayout.setOnRecallMessageResultListener(this);
+        listenerRecyclerViewItemFinishLayout();
     }
 
     @Override
@@ -188,6 +245,8 @@ public class ChatFragment extends EaseChatFragment implements OnRecallMessageRes
 
         chatLayout.getChatInputMenu().getPrimaryMenu().getEditText().setText(getUnSendMsg());
         chatLayout.turnOnTypingMonitor(DemoHelper.getInstance().getModel().isShowMsgTyping());
+
+        groupDetailViewModel = new ViewModelProvider((AppCompatActivity)mContext).get(GroupDetailViewModel.class);
 
         LiveDataBus.get().with(DemoConstant.MESSAGE_CHANGE_CHANGE).postValue(new EaseEvent(DemoConstant.MESSAGE_CHANGE_CHANGE, EaseEvent.TYPE.MESSAGE));
 
@@ -244,6 +303,101 @@ public class ChatFragment extends EaseChatFragment implements OnRecallMessageRes
                 chatLayout.getChatMessageListLayout().refreshMessages();
             }
         });
+
+        LiveDataBus.get().with(DemoConstant.GROUP_MEMBER_ATTRIBUTE_CHANGE, EaseEvent.class).observe(getViewLifecycleOwner(), event -> {
+            if(event == null) {
+                return;
+            }
+            if(event != null) {
+                chatLayout.getChatMessageListLayout().refreshMessages();
+            }
+        });
+        groupDetailViewModel.getFetchMemberAttributesObservable().observe(this,response ->{
+            if(response == null) {
+                return;
+            }
+            if(response.status == Status.SUCCESS) {
+                chatLayout.getChatMessageListLayout().refreshMessages();
+            }
+        });
+    }
+
+    private void listenerRecyclerViewItemFinishLayout() {
+        if(chatLayout == null || chatType != EaseConstant.CHATTYPE_GROUP) {
+            return;
+        }
+        EaseChatMessageListLayout chatMessageListLayout = chatLayout.getChatMessageListLayout();
+        if(chatMessageListLayout == null || chatMessageListLayout.getChildCount() <= 0) {
+            return;
+        }
+        View swipeView = chatMessageListLayout.getChildAt(0);
+        if(!(swipeView instanceof SwipeRefreshLayout)) {
+            return;
+        }
+        if(((SwipeRefreshLayout) swipeView).getChildCount() <= 0) {
+            return;
+        }
+        RecyclerView recyclerView = null;
+        for(int i = 0; i < ((SwipeRefreshLayout) swipeView).getChildCount(); i++) {
+            View child = ((SwipeRefreshLayout) swipeView).getChildAt(i);
+            if(child instanceof RecyclerView) {
+                recyclerView = (RecyclerView) child;
+                break;
+            }
+        }
+        if(recyclerView == null || chatMessageListLayout.getMessageAdapter() == null) {
+            return;
+        }
+        EaseMessageAdapter messageAdapter = chatMessageListLayout.getMessageAdapter();
+        RecyclerView finalRecyclerView = recyclerView;
+        recyclerView.getViewTreeObserver().addOnGlobalLayoutListener(() -> {
+            if(isFirstMeasure && finalRecyclerView.getLayoutManager() != null && messageAdapter.getData() != null
+                && ((LinearLayoutManager) finalRecyclerView.getLayoutManager()).findLastVisibleItemPosition() == messageAdapter.getData().size() - 1) {
+                isFirstMeasure = false;
+                int[] positionArray = RecyclerViewUtils.rangeMeasurement(finalRecyclerView);
+                getGroupUserInfo(positionArray[0], positionArray[1]);
+            }
+        });
+        recyclerView.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrollStateChanged(@NonNull RecyclerView recyclerView, int newState) {
+                super.onScrollStateChanged(recyclerView, newState);
+                if(newState == RecyclerView.SCROLL_STATE_IDLE) {
+                    int[] positionArray = RecyclerViewUtils.rangeMeasurement(recyclerView);
+                    getGroupUserInfo(positionArray[0], positionArray[1]);
+                }
+            }
+        });
+    }
+
+    public void getGroupUserInfo(int start, int end) {
+        if (start <= end && end >= 0 && chatType == DemoConstant.CHATTYPE_GROUP){
+            Set<String> nameSet = new HashSet<>();
+            for (int i = start; i <= end; i++) {
+                EMMessage message = chatLayout.getChatMessageListLayout().getMessageAdapter().getItem(i);
+                if (message != null && !TextUtils.isEmpty(message.getFrom())){
+                    nameSet.add(message.getFrom());
+                }
+            }
+            Iterator<String> iterator = nameSet.iterator();
+            while (iterator.hasNext()) {
+                String userId = iterator.next();
+                MemberAttributeBean bean = DemoHelper.getInstance().getMemberAttribute(conversationId, userId);
+                if (bean == null){
+                    //当从本地获取bean对象为空时 默认创建bean对象 并赋值nickName为userId
+                    MemberAttributeBean emptyBean = new MemberAttributeBean();
+                    emptyBean.setNickName(userId);
+                    DemoHelper.getInstance().saveMemberAttribute(conversationId, userId, emptyBean);
+                }else {
+                    iterator.remove();
+                }
+            }
+            if(nameSet.isEmpty()) {
+                return;
+            }
+            List<String> userIds = new ArrayList<>(nameSet);
+            groupDetailViewModel.fetchGroupMemberAttribute(conversationId, userIds);
+        }
     }
 
     private void showDeliveryDialog() {
@@ -295,7 +449,11 @@ public class ChatFragment extends EaseChatFragment implements OnRecallMessageRes
                 }else{
                     user.setContact(3);
                 }
-                ContactDetailActivity.actionStart(mContext, user);
+                if (chatType == EaseConstant.CHATTYPE_GROUP){
+                    ContactDetailActivity.actionStart(mContext, user ,conversationId);
+                }else {
+                    ContactDetailActivity.actionStart(mContext, user);
+                }
         }else{
             UserDetailActivity.actionStart(mContext,null,null);
         }
@@ -326,6 +484,23 @@ public class ChatFragment extends EaseChatFragment implements OnRecallMessageRes
         return false;
     }
 
+    private void onRequestResult(Map<String, Boolean> result, int requestCode) {
+        if(result != null && result.size() > 0) {
+            for (Map.Entry<String, Boolean> entry : result.entrySet()) {
+                Log.e("TAG", "onRequestResult: " + entry.getKey() + "  " + entry.getValue());
+            }
+            if(getStorageAccess(mContext) != StorageAccess.Denied) {
+                if(requestCode == REQUEST_CODE_STORAGE_PICTURE) {
+                    selectPicFromLocal();
+                }else if(requestCode == REQUEST_CODE_STORAGE_VIDEO) {
+                    selectVideoFromLocal();
+                }else if(requestCode == REQUEST_CODE_STORAGE_FILE) {
+                    selectFileFromLocal();
+                }
+            }
+        }
+    }
+
     @SuppressLint("NonConstantResourceId")
     @Override
     public void onChatExtendMenuItemClick(View view, int itemId) {
@@ -336,7 +511,7 @@ public class ChatFragment extends EaseChatFragment implements OnRecallMessageRes
                 }
                 break;
             case R.id.extend_item_picture :
-                if(checkIfHasPermissions(Manifest.permission.READ_EXTERNAL_STORAGE, REQUEST_CODE_STORAGE_PICTURE)) {
+                if(checkPhotosPermission(mContext)) {
                     selectPicFromLocal();
                 }
                 break;
@@ -346,12 +521,12 @@ public class ChatFragment extends EaseChatFragment implements OnRecallMessageRes
                 }
                 break;
             case R.id.extend_item_video :
-                if(checkIfHasPermissions(Manifest.permission.READ_EXTERNAL_STORAGE, REQUEST_CODE_STORAGE_VIDEO)) {
+                if(checkVideosPermission(mContext)) {
                     selectVideoFromLocal();
                 }
                 break;
             case R.id.extend_item_file :
-                if(checkIfHasPermissions(Manifest.permission.READ_EXTERNAL_STORAGE, REQUEST_CODE_STORAGE_FILE)) {
+                if(checkFilesPermission(mContext)) {
                     selectFileFromLocal();
                 }
                 break;
@@ -488,11 +663,10 @@ public class ChatFragment extends EaseChatFragment implements OnRecallMessageRes
     @Override
     public void onPreMenu(EasePopupWindowHelper helper, EMMessage message, View v) {
         //默认两分钟后，即不可撤回
-        if(System.currentTimeMillis() - message.getMsgTime() > 2 * 60 * 1000) {
-            helper.findItemVisible(R.id.action_chat_recall, false);
-        }
+        helper.findItemVisible(R.id.action_chat_recall, canRecall(message));
         EMMessage.Type type = message.getType();
         helper.findItemVisible(R.id.action_chat_forward, false);
+        helper.findItemVisible(R.id.action_msg_edit, false);
         switch (type) {
             case TXT:
                 if(!message.getBooleanAttribute(DemoConstant.MESSAGE_ATTR_IS_VIDEO_CALL, false)
@@ -502,15 +676,46 @@ public class ChatFragment extends EaseChatFragment implements OnRecallMessageRes
                 if(v.getId() == R.id.subBubble){
                     helper.findItemVisible(R.id.action_chat_forward, false);
                 }
+                helper.findItemVisible(R.id.action_msg_edit, canEdit(message));
                 break;
             case IMAGE:
                 helper.findItemVisible(R.id.action_chat_forward, true);
+                break;
+            case CUSTOM:
+                // Card message
+                if(((EMCustomMessageBody)message.getBody()).event().equals(EaseConstant.USER_CARD_EVENT) && canRecall(message)) {
+                    helper.findItemVisible(R.id.action_chat_recall, true);
+                }
                 break;
         }
 
         if(chatType == DemoConstant.CHATTYPE_CHATROOM) {
             helper.findItemVisible(R.id.action_chat_forward, true);
         }
+    }
+
+    // 默认两分钟后，即不可撤回
+    private boolean canRecall(EMMessage message) {
+        if(message == null) {
+            return false;
+        }
+        return (System.currentTimeMillis() - message.getMsgTime() <= 2 * 60 * 1000) && message.direct() == EMMessage.Direct.SEND;
+    }
+
+    private boolean canEdit(EMMessage message) {
+        return isGroupOwnerOrAdmin() || isSender(message);
+    }
+
+    private boolean isGroupOwnerOrAdmin() {
+        if(chatType != EaseConstant.CHATTYPE_GROUP) {
+            return false;
+        }
+        EMGroup group = EMClient.getInstance().groupManager().getGroup(conversationId);
+        return GroupHelper.isOwner(group) || GroupHelper.isAdmin(group);
+    }
+
+    private boolean isSender(EMMessage message) {
+        return message != null && message.direct() == EMMessage.Direct.SEND;
     }
 
     @Override
@@ -539,8 +744,54 @@ public class ChatFragment extends EaseChatFragment implements OnRecallMessageRes
             case R.id.action_chat_label:
                 showLabelDialog(message);
                 return true;
+            case R.id.action_msg_edit:
+                showModifyDialog(message);
+                return true;
+            case R.id.action_chat_quote:
+                if(message.getType() == EMMessage.Type.CUSTOM && TextUtils.equals(DemoConstant.USER_CARD_EVENT, ((EMCustomMessageBody)message.getBody()).event())) {
+                    AddCardQuote(message);
+                    return true;
+                }
+                return false;
         }
         return false;
+    }
+
+    private void AddCardQuote(EMMessage message) {
+        JSONObject quoteObject = null;
+        try {
+            quoteObject = new JSONObject();
+            quoteObject.put(EaseConstant.QUOTE_MSG_ID, message.getMsgId());
+            quoteObject.put(EaseConstant.QUOTE_MSG_PREVIEW, getResources().getString(R.string.quote_card));
+            quoteObject.put(EaseConstant.QUOTE_MSG_TYPE, message.getType().name().toLowerCase());
+            quoteObject.put(EaseConstant.QUOTE_MSG_SENDER, message.getFrom());
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+        if(quoteObject != null) {
+            chatLayout.setMessageQuoteInfo(quoteObject);
+            chatLayout.getChatInputMenu().getPrimaryMenu().primaryStartQuote(message);
+        }
+    }
+
+    private void showModifyDialog(EMMessage message) {
+
+        if(message.getBody() instanceof EMTextMessageBody) {
+            new EditTextDialogFragment.Builder((BaseActivity) mContext)
+                    .setContent(((EMTextMessageBody) message.getBody()).getMessage())
+                    .setConfirmClickListener(new EditTextDialogFragment.ConfirmClickListener() {
+                        @Override
+                        public void onConfirmClick(View view, String content) {
+                            if(!TextUtils.isEmpty(content)) {
+                                EMTextMessageBody textMessageBody = new EMTextMessageBody(content);
+                                chatLayout.modifyMessage(message.getMsgId(),textMessageBody);
+                            }
+                        }
+                    })
+                    .setTitle(R.string.em_chat_edit_message)
+                    .show();
+        }
+
     }
 
     private void showProgressBar() {
@@ -689,6 +940,136 @@ public class ChatFragment extends EaseChatFragment implements OnRecallMessageRes
     @Override
     public void onPermissionsDenied(int requestCode, @NonNull List<String> perms) {
 
+    }
+
+    @Override
+    public SpannableString providerQuoteMessageContent(EMMessage quoteMessage, EMMessage.Type quoteMsgType, String quoteSender, String quoteContent) {
+        if(quoteMsgType == EMMessage.Type.CUSTOM) {
+            return customTypeDisplay(quoteMessage, quoteSender, quoteContent);
+        }else {
+            return new SpannableString(quoteSender+": "+quoteContent);
+        }
+    }
+
+    private SpannableString customTypeDisplay(EMMessage quoteMessage, String quoteSender, String content){
+        if (quoteMessage != null && quoteMessage.getBody() instanceof EMCustomMessageBody){
+            EMCustomMessageBody customMessageBody = (EMCustomMessageBody)quoteMessage.getBody();
+            Map<String, String> params = customMessageBody.getParams();
+            if (params.size() > 0 && customMessageBody.event().equals(EaseConstant.USER_CARD_EVENT)){
+                String userIdByCard = params.get(EaseConstant.USER_CARD_ID);
+                String nicknameByCard = params.get(EaseConstant.USER_CARD_NICK);
+                String customContent = content;
+                if(!TextUtils.isEmpty(userIdByCard)){
+                    EaseUser user = EaseUserUtils.getUserInfo(userIdByCard);
+                    if(user == null){
+                        user = new EaseUser(userIdByCard);
+                        user.setNickname(nicknameByCard);
+                    }
+                    if (TextUtils.isEmpty(user.getNickname())){
+                        customContent = userIdByCard;
+                    }else {
+                        customContent = user.getNickname();
+                    }
+                }
+                int cardIndex = quoteSender.length() + 2;
+                String cardTitle = quoteSender + ":   " + customContent;
+                SpannableString cardSb = new SpannableString(cardTitle);
+                CenterImageSpan cardSpan = new CenterImageSpan(mContext, R.drawable.ease_chat_item_menu_card);
+                if (cardSb.length() > 0){
+                    cardSb.setSpan(cardSpan, cardIndex, cardIndex + 1, Spanned.SPAN_INCLUSIVE_EXCLUSIVE);
+                }
+                return cardSb;
+            }
+        }else if(content.contains(getString(R.string.card))) {
+            int cardIndex = quoteSender.length() + 2;
+            SpannableString cardSb = new SpannableString(quoteSender + ":   " + content);
+            CenterImageSpan cardSpan = new CenterImageSpan(mContext, R.drawable.ease_chat_item_menu_card);
+            if (cardSb.length() > 0){
+                cardSb.setSpan(cardSpan, cardIndex, cardIndex + 1, Spanned.SPAN_INCLUSIVE_EXCLUSIVE);
+            }
+            return cardSb;
+        }
+        return new SpannableString(quoteSender + ": " + content);
+    }
+
+    private boolean checkPhotosPermission(Context context) {
+        if (Build.VERSION.SDK_INT > Build.VERSION_CODES.TIRAMISU) {
+            if(!EasyPermissions.hasPermissions(context, Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)) {
+                requestImagePermission.launch(new String[]{Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED});
+                return false;
+            }
+        }else if(Build.VERSION.SDK_INT == Build.VERSION_CODES.TIRAMISU) {
+            if(!EasyPermissions.hasPermissions(context, Manifest.permission.READ_MEDIA_IMAGES)) {
+                requestImagePermission.launch(new String[]{Manifest.permission.READ_MEDIA_IMAGES});
+                return false;
+            }
+        }else {
+            if(!EasyPermissions.hasPermissions(context, Manifest.permission.READ_EXTERNAL_STORAGE)) {
+                requestImagePermission.launch(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE});
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean checkVideosPermission(Context context) {
+        if (Build.VERSION.SDK_INT > Build.VERSION_CODES.TIRAMISU) {
+            if(!EasyPermissions.hasPermissions(context, Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)) {
+                requestVideoPermission.launch(new String[]{Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED});
+                return false;
+            }
+        }else if(Build.VERSION.SDK_INT == Build.VERSION_CODES.TIRAMISU) {
+            if(!EasyPermissions.hasPermissions(context, Manifest.permission.READ_MEDIA_VIDEO)) {
+                requestVideoPermission.launch(new String[]{Manifest.permission.READ_MEDIA_VIDEO});
+                return false;
+            }
+        }else {
+            if(!EasyPermissions.hasPermissions(context, Manifest.permission.READ_EXTERNAL_STORAGE)) {
+                requestVideoPermission.launch(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE});
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean checkFilesPermission(Context context) {
+        if (Build.VERSION.SDK_INT > Build.VERSION_CODES.TIRAMISU) {
+            if(!EasyPermissions.hasPermissions(context, Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)) {
+                requestFilePermission.launch(new String[]{Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED});
+                return false;
+            }
+        }else if(Build.VERSION.SDK_INT == Build.VERSION_CODES.TIRAMISU) {
+            if(!EasyPermissions.hasPermissions(context, Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)) {
+                requestFilePermission.launch(new String[]{Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO});
+                return false;
+            }
+        }else {
+            if(!EasyPermissions.hasPermissions(context, Manifest.permission.READ_EXTERNAL_STORAGE)) {
+                requestFilePermission.launch(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE});
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private StorageAccess getStorageAccess(Context context) {
+        if (EasyPermissions.hasPermissions(context, Manifest.permission.READ_MEDIA_IMAGES) ||
+                EasyPermissions.hasPermissions(context, Manifest.permission.READ_MEDIA_VIDEO)) {
+            // Full access on Android 13+
+            return StorageAccess.Full;
+        }else if(EasyPermissions.hasPermissions(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)) {
+            // Partial access on Android 13+
+            return StorageAccess.Partial;
+        }else if(EasyPermissions.hasPermissions(context, Manifest.permission.READ_EXTERNAL_STORAGE)) {
+            // Full access up to Android 12
+            return StorageAccess.Full;
+        }else {
+            return StorageAccess.Denied;
+        }
+    }
+
+    public enum StorageAccess {
+        Full, Partial, Denied
     }
 
 }

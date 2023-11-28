@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
 import android.text.TextUtils;
+import android.view.KeyEvent;
 import android.view.View;
 import android.widget.TextView;
 
@@ -27,11 +28,9 @@ import com.hyphenate.chatdemo.section.group.GroupHelper;
 import com.hyphenate.chatdemo.section.group.activity.ChatRoomDetailActivity;
 import com.hyphenate.chatdemo.section.group.activity.GroupDetailActivity;
 import com.hyphenate.chatdemo.section.group.viewmodels.GroupDetailViewModel;
-import com.hyphenate.easeui.EaseIM;
 import com.hyphenate.easeui.constants.EaseConstant;
-import com.hyphenate.easeui.domain.EaseUser;
 import com.hyphenate.easeui.model.EaseEvent;
-import com.hyphenate.easeui.provider.EaseUserProfileProvider;
+import com.hyphenate.easeui.utils.EaseUserUtils;
 import com.hyphenate.easeui.widget.EaseTitleBar;
 
 public class ChatActivity extends BaseInitActivity implements EaseTitleBar.OnBackPressListener, EaseTitleBar.OnRightClickListener, ChatFragment.OnFragmentInfoListener {
@@ -44,6 +43,7 @@ public class ChatActivity extends BaseInitActivity implements EaseTitleBar.OnBac
     private GroupDetailViewModel groupDetailViewModel;
     private TextView tvTitle;
     private TextView subTitle;
+    private EMConversation conversation;
 
     public static void actionStart(Context context, String conversationId, int chatType) {
         Intent intent = new Intent(context, ChatActivity.class);
@@ -115,7 +115,7 @@ public class ChatActivity extends BaseInitActivity implements EaseTitleBar.OnBac
     @Override
     protected void initData() {
         super.initData();
-        EMConversation conversation = EMClient.getInstance().chatManager().getConversation(conversationId);
+        conversation = EMClient.getInstance().chatManager().getConversation(conversationId);
         MessageViewModel messageViewModel = new ViewModelProvider(this).get(MessageViewModel.class);
         groupDetailViewModel = new ViewModelProvider(this).get(GroupDetailViewModel.class);
         viewModel = new ViewModelProvider(this).get(ChatViewModel.class);
@@ -216,17 +216,7 @@ public class ChatActivity extends BaseInitActivity implements EaseTitleBar.OnBac
             }
             title =  TextUtils.isEmpty(room.getName()) ? conversationId : room.getName();
         }else {
-            EaseUserProfileProvider userProvider = EaseIM.getInstance().getUserProvider();
-            if(userProvider != null) {
-                EaseUser user = userProvider.getUser(conversationId);
-                if(user != null) {
-                    title = user.getNickname();
-                }else {
-                    title = conversationId;
-                }
-            }else {
-                title = conversationId;
-            }
+            title=EaseUserUtils.getDisplayName(conversationId);
         }
         this.tvTitle.setText(title);
     }
@@ -234,6 +224,19 @@ public class ChatActivity extends BaseInitActivity implements EaseTitleBar.OnBac
     @Override
     public void onBackPress(View view) {
         onBackPressed();
+        if (chatType == DemoConstant.CHATTYPE_GROUP){
+            DemoHelper.getInstance().reLoadUserInfoFromDb();
+        }
+    }
+
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (keyCode == KeyEvent.KEYCODE_BACK && event.getRepeatCount() == 0){
+            if (chatType == DemoConstant.CHATTYPE_GROUP){
+                DemoHelper.getInstance().reLoadUserInfoFromDb();
+            }
+        }
+        return super.onKeyDown(keyCode, event);
     }
 
     @Override

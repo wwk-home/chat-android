@@ -41,8 +41,11 @@ import com.hyphenate.chatdemo.common.manager.PushAndMessageHelper;
 import com.hyphenate.chatdemo.common.repositories.EMContactManagerRepository;
 import com.hyphenate.chatdemo.common.repositories.EMGroupManagerRepository;
 import com.hyphenate.chatdemo.common.repositories.EMPushManagerRepository;
+import com.hyphenate.chatdemo.common.utils.FetchUserInfoList;
+import com.hyphenate.chatdemo.common.utils.GsonTools;
 import com.hyphenate.chatdemo.section.chat.activity.ChatActivity;
 import com.hyphenate.chatdemo.section.group.GroupHelper;
+import com.hyphenate.chatdemo.section.group.MemberAttributeBean;
 import com.hyphenate.easeui.domain.EaseUser;
 import com.hyphenate.easeui.interfaces.EaseGroupListener;
 import com.hyphenate.easeui.manager.EaseAtMessageHelper;
@@ -51,6 +54,8 @@ import com.hyphenate.easeui.manager.EaseSystemMsgManager;
 import com.hyphenate.easeui.model.EaseEvent;
 import com.hyphenate.exceptions.HyphenateException;
 import com.hyphenate.util.EMLog;
+
+import org.json.JSONObject;
 
 import java.util.List;
 import java.util.Map;
@@ -206,7 +211,27 @@ public class ChatPresenter extends EaseChatPresenter {
         }
     }
 
+    @Override
+    public void onMessageContentChanged(EMMessage message, String operatorId, long operationTime) {
+        EaseEvent event = EaseEvent.create(DemoConstant.MESSAGE_CHANGE_RECEIVE, EaseEvent.TYPE.MESSAGE);
+        messageChangeLiveData.with(DemoConstant.MESSAGE_CHANGE_CHANGE).postValue(event);
+        EMLog.d(TAG, "onMessageContentChanged id : " + message.getMsgId());
+        EMLog.d(TAG, "onMessageContentChanged type: " + message.getType());
 
+        // todo 看产品需求再决定要不要通知
+
+//        // 如果设置群组离线消息免打扰，则不进行消息通知
+//        List<String> disabledIds = DemoHelper.getInstance().getPushManager().getNoPushGroups();
+//        if(disabledIds != null && disabledIds.contains(message.conversationId())) {
+//            return;
+//        }
+//        // in background, do not refresh UI, notify it in notification bar
+//        if(!DemoApplication.getInstance().getLifecycleCallbacks().isFront()){
+//            getNotifier().notify(message);
+//        }
+//        //notify new message
+//        getNotifier().vibrateAndPlayTone(message);
+    }
 
     /**
      * 判断是否已经启动了MainActivity
@@ -325,6 +350,12 @@ public class ChatPresenter extends EaseChatPresenter {
                             userDao.clearUsers();
                             userDao.insert(EmUserEntity.parseList(value));
                         }
+                        if (value.size() > 0){
+                            FetchUserInfoList fetchUserInfoList = FetchUserInfoList.getInstance();
+                            for (EaseUser user : value) {
+                                fetchUserInfoList.addUserId(user.getUsername());
+                            }
+                        }
                     }
 
                     @Override
@@ -362,7 +393,8 @@ public class ChatPresenter extends EaseChatPresenter {
                     || error == EMError.USER_DEVICE_CHANGED
                     || error == EMError.USER_LOGIN_TOO_MANY_DEVICES) {
                 event = DemoConstant.ACCOUNT_CONFLICT;
-            } else if (error == EMError.SERVER_SERVICE_RESTRICTED) {
+            } else if (error == EMError.SERVER_SERVICE_RESTRICTED
+                    ||error == EMError.APP_ACTIVE_NUMBER_REACH_LIMITATION) {
                 event = DemoConstant.ACCOUNT_FORBIDDEN;
             } else if (error == EMError.USER_KICKED_BY_CHANGE_PASSWORD) {
                 event = DemoConstant.ACCOUNT_KICKED_BY_CHANGE_PASSWORD;
@@ -458,6 +490,7 @@ public class ChatPresenter extends EaseChatPresenter {
 
         @Override
         public void onUserRemoved(String groupId, String groupName) {
+            DemoHelper.getInstance().clearGroupMemberAttribute(groupId);
             EaseEvent easeEvent = new EaseEvent(DemoConstant.GROUP_CHANGE, EaseEvent.TYPE.GROUP_LEAVE);
             easeEvent.message = groupId;
             messageChangeLiveData.with(DemoConstant.GROUP_CHANGE).postValue(easeEvent);
@@ -534,8 +567,9 @@ public class ChatPresenter extends EaseChatPresenter {
         @Override
         public void onRequestToJoinDeclined(String groupId, String groupName, String decliner, String reason) {
             super.onRequestToJoinDeclined(groupId, groupName, decliner, reason);
-            showToast(context.getString(R.string.demo_group_listener_onRequestToJoinDeclined, decliner, groupName));
-            EMLog.i(TAG, context.getString(R.string.demo_group_listener_onRequestToJoinDeclined, decliner, groupName));
+            String showName = TextUtils.isEmpty(groupName) ? groupId : groupName;
+            showToast(context.getString(R.string.demo_group_listener_onRequestToJoinDeclined, decliner,showName ));
+            EMLog.i(TAG, context.getString(R.string.demo_group_listener_onRequestToJoinDeclined, decliner,showName));
         }
 
         @Override
@@ -643,6 +677,7 @@ public class ChatPresenter extends EaseChatPresenter {
 
         @Override
         public void onMemberExited(String groupId, String member) {
+            DemoHelper.getInstance().clearGroupMemberAttributeByUserId(groupId,member);
             LiveDataBus.get().with(DemoConstant.GROUP_CHANGE).postValue(EaseEvent.create(DemoConstant.GROUP_CHANGE, EaseEvent.TYPE.GROUP));
             showToast(context.getString(R.string.demo_group_listener_onMemberExited, member));
             EMLog.i(TAG, context.getString(R.string.demo_group_listener_onMemberExited, member));
@@ -666,6 +701,18 @@ public class ChatPresenter extends EaseChatPresenter {
             LiveDataBus.get().with(DemoConstant.GROUP_SHARE_FILE_CHANGE).postValue(EaseEvent.create(DemoConstant.GROUP_SHARE_FILE_CHANGE, EaseEvent.TYPE.GROUP));
             showToast(context.getString(R.string.demo_group_listener_onSharedFileDeleted, fileId));
             EMLog.i(TAG, context.getString(R.string.demo_group_listener_onSharedFileDeleted, fileId));
+        }
+
+        @Override
+        public void onGroupMemberAttributeChanged(String groupId,String userId,Map<String, String> attribute, String from) {
+            if ( attribute != null && attribute.size() > 0){
+                EMLog.d(TAG,"onGroupMemberAttributeChanged: " + groupId +" - "+ attribute.toString());
+                MemberAttributeBean bean = GsonTools.changeGsonToBean(new JSONObject(attribute).toString(),MemberAttributeBean.class);
+                if (bean != null && bean.getNickName() != null){
+                    DemoHelper.getInstance().saveMemberAttribute(groupId,userId,bean);
+                    LiveDataBus.get().with(DemoConstant.GROUP_MEMBER_ATTRIBUTE_CHANGE).postValue(EaseEvent.create(DemoConstant.GROUP_MEMBER_ATTRIBUTE_CHANGE, EaseEvent.TYPE.MESSAGE));
+                }
+            }
         }
     }
 
@@ -1025,6 +1072,10 @@ public class ChatPresenter extends EaseChatPresenter {
                     saveGroupNotification(groupId, /*groupName*/"",  /*person*/usernames.get(0), /*reason*/"", InviteMessageStatus.MULTI_DEVICE_GROUP_REMOVE_MUTE);
 
                     showToast("GROUP_REMOVE_MUTE");
+                    break;
+                case GROUP_METADATA_CHANGED:
+                    EMLog.d(TAG,"EVENT GROUP_METADATA_CHANGED");
+                    new EMGroupManagerRepository().fetchGroupMemberDetail(groupId,usernames);
                     break;
                 default:
                     break;
